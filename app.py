@@ -50,7 +50,7 @@ def save_master_player_list(players_list):
         supabase.table("master_player_list").upsert({"id": 1, "players": players_list}).execute()
         return True
     except Exception as e:
-        st.error(f"Error saving roster: {e}")
+        st.error(f"Error saving players: {e}")
         return False
 
 def load_global_session_state():
@@ -161,16 +161,11 @@ def log_login_event(username):
 
 def is_open_access_window():
     now_uk = datetime.now(ZoneInfo("Europe/London"))
-    # 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday
     return now_uk.weekday() < 5 and (15 <= now_uk.hour < 22)
 
 # --- SESSION INITIALIZATION ---
-query_params = st.query_params
-if "logged_in" not in st.session_state or not st.session_state.logged_in:
-    if query_params.get("user") and query_params.get("role"):
-        st.session_state.update({"logged_in": True, "username": query_params.get("user"), "role": query_params.get("role")})
-    else:
-        st.session_state.update({"logged_in": False, "username": None, "role": None})
+if "logged_in" not in st.session_state:
+    st.session_state.update({"logged_in": False, "username": None, "role": None})
 
 if "last_court_time" not in st.session_state: st.session_state.last_court_time = {}
 if "roster_builder" not in st.session_state: st.session_state.roster_builder = load_master_player_list()
@@ -199,7 +194,6 @@ if not st.session_state.logged_in:
                     role = get_user_role(user_in, pass_in)
                     if role:
                         st.session_state.update({"logged_in": True, "username": user_in, "role": role})
-                        st.query_params.update({"user": user_in, "role": role})
                         log_login_event(user_in)
                         st.rerun()
                     else:
@@ -222,7 +216,7 @@ if not st.session_state.logged_in:
 open_access = is_open_access_window()
 can_edit = open_access or (st.session_state.role == "admin")
 is_master_admin = (st.session_state.username == "admin")
-can_manage_season = (st.session_state.role == "admin") # Locked to admins only
+can_manage_season = (st.session_state.role == "admin") 
 
 st.sidebar.write(f"Logged in as: **{st.session_state.username}** ({st.session_state.role.capitalize()})")
 st.sidebar.divider()
@@ -241,7 +235,6 @@ else:
     st.sidebar.info("🔒 **Outside Hours: Read-Only**")
 
 if st.sidebar.button("Log Out", use_container_width=True):
-    st.query_params.clear()
     st.session_state.update({"logged_in": False, "username": None, "role": None})
     st.rerun()
 
@@ -342,7 +335,7 @@ if tab_courts:
                         st.rerun()
                 
                 st.divider()
-                if st.button("💾 Save Roster", use_container_width=True):
+                if st.button("💾 Save Players", use_container_width=True):
                     if save_master_player_list(st.session_state.roster_builder): st.success("Saved!")
                 
                 num_courts = st.number_input("Courts", 1, 6, 3)
