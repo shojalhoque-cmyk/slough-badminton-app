@@ -18,6 +18,7 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] > div { margin-bottom: -0.1rem; }
     div[data-testid="stDataFrame"] { width: 100% !important; overflow-x: auto; }
     button[data-baseweb="tab"] { font-size: 14px !important; font-weight: bold !important; padding: 8px 12px !important; }
+    .ticker-box { background-color: #1E232F; padding: 10px 15px; border-radius: 8px; border-left: 4px solid #FF4B4B; margin-bottom: 15px; font-size: 14px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -76,6 +77,8 @@ def load_global_session_state():
             st.session_state.session_scores = row.get("session_scores", {})
             st.session_state.league_standings = row.get("league_standings", {})
             st.session_state.play_counts = row.get("play_counts", {})
+            st.session_state.player_emojis = row.get("player_emojis", {})
+            st.session_state.live_ticker = row.get("live_ticker", [])
     except Exception:
         pass
 
@@ -87,7 +90,9 @@ def save_global_session_state():
             "active_players": st.session_state.get("active_players", []),
             "session_scores": st.session_state.get("session_scores", {}),
             "league_standings": st.session_state.get("league_standings", {}),
-            "play_counts": st.session_state.get("play_counts", {})
+            "play_counts": st.session_state.get("play_counts", {}),
+            "player_emojis": st.session_state.get("player_emojis", {}),
+            "live_ticker": st.session_state.get("live_ticker", [])
         }).execute()
     except Exception:
         pass
@@ -139,22 +144,31 @@ def update_live_court(court_num, team1=None, team2=None):
     except Exception:
         pass
 
-def load_player_ratings():
-    ratings = {}
+def update_user_presence(username):
     try:
-        resp = supabase.table("users").select("*").execute()
+        now_uk = datetime.now(ZoneInfo("Europe/London")).isoformat()
+        supabase.table("active_presence").upsert({
+            "username": username,
+            "last_seen": now_uk
+        }).execute()
+    except Exception:
+        pass
+
+def get_active_viewers():
+    try:
+        # Fetch users seen within the last 3 minutes
+        now_utc = datetime.now(ZoneInfo("Europe/London"))
+        resp = supabase.table("active_presence").select("username, last_seen").execute()
+        active = []
         if resp.data:
             for row in resp.data:
-                ratings[row["username"]] = row.get("rating") if row.get("rating") is not None else 1200
+                last_seen_dt = datetime.fromisoformat(row["last_seen"])
+                diff_seconds = (now_utc - last_seen_dt).total_seconds()
+                if diff_seconds <= 180:  # Active in last 3 minutes
+                    active.append(row["username"])
+        return active
     except Exception:
-        pass
-    return ratings
-
-def save_player_rating(username, new_rating):
-    try:
-        supabase.table("users").update({"rating": new_rating}).eq("username", username).execute()
-    except Exception:
-        pass
+        return []
 
 def get_user_role(username, password):
     if username in ADMIN_ACCOUNTS and ADMIN_ACCOUNTS[username] == password:
@@ -173,7 +187,7 @@ def register_user(username, password):
         response = supabase.table("users").select("username").eq("username", username).execute()
         if response.data:
             return False, "Username already exists."
-        supabase.table("users").insert({"username": username, "password": password, "role": "player", "rating": 1200}).execute()
+        supabase.table("users").insert({"username": username, "password": password, "role": "player"}).execute()
         return True, "Account created successfully!"
     except Exception as e:
         return False, f"Error creating account: {e}"
@@ -198,22 +212,27 @@ if "logged_in" not in st.session_state or not st.session_state.logged_in:
         st.session_state.logged_in = True
         st.session_state.username = saved_user
         st.session_state.role = saved_role
-        st.session_state.player_ratings = load_player_ratings()
     else:
         st.session_state.logged_in = False
         st.session_state.username = None
         st.session_state.role = None
 
-if "player_ratings" not in st.session_state:
-    st.session_state.player_ratings = load_player_ratings()
-    
 if "last_court_time" not in st.session_state:
     st.session_state.last_court_time = {}
 
 if "roster_builder" not in st.session_state:
     st.session_state.roster_builder = load_master_player_list()
 
+if "player_emojis" not in st.session_state:
+    st.session_state.player_emojis = {}
+
+if "live_ticker" not in st.session_state:
+    st.session_state.live_ticker = ["👋 Welcome to Slough Badminton Club Mondays! Ready for action?"]
+
 load_global_session_state()
+
+if st.session_state.logged_in and st.session_state.username:
+    update_user_presence(st.session_state.username)
 
 RAW_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 260" width="260" height="260">
     <circle cx="130" cy="130" r="120" fill="#1E4867" stroke="#F9F8F3" stroke-width="6"/>
@@ -246,10 +265,10 @@ if not st.session_state.logged_in:
                         st.session_state.logged_in = True
                         st.session_state.username = username_input
                         st.session_state.role = role
-                        st.session_state.player_ratings = load_player_ratings()
                         st.query_params["user"] = username_input
                         st.query_params["role"] = role
                         log_login_event(username_input)
+                        update_user_presence(username_input)
                         st.success(f"Welcome back, {username_input}!")
                         st.rerun()
                     else:
@@ -276,6 +295,21 @@ is_master_admin = (st.session_state.username == "admin")
 can_manage_season = (st.session_state.username in ["admin", "Musa", "Aaron"])
 
 st.sidebar.write(f"Logged in as: **{st.session_state.username}** ({st.session_state.role.capitalize()})")
+
+# --- WHATSAPP GROUP LINK INTEGRATION ---
+whatsapp_link = "https://chat.whatsapp.com/YOUR_WHATSAPP_GROUP_LINK_HERE"  # Replace with your actual invite link
+st.sidebar.markdown(f'<a href="{whatsapp_link}" target="_blank"><button style="width:100%; background-color:#25D366; color:white; border:none; padding:10px; border-radius:8px; font-weight:bold; cursor:pointer;">💬 Open WhatsApp Group</button></a>', unsafe_allow_html=True)
+st.sidebar.write("---")
+
+# --- LIVE ACTIVE USERS SIDEBAR WIDGET ---
+active_viewers = get_active_viewers()
+st.sidebar.markdown(f"🟢 **Online Right Now ({len(active_viewers)}):**")
+if active_viewers:
+    st.sidebar.caption(", ".join([f"**{u}**" for u in active_viewers]))
+else:
+    st.sidebar.caption("No other active users detected.")
+st.sidebar.write("---")
+
 if st.session_state.role == "admin": st.sidebar.success("👑 **Admin User: Full Access Active 24/7**")
 elif session_live: st.sidebar.success("🟢 **Session Active (8PM-10PM): Edit Mode Unlocked for All**")
 else: st.sidebar.info("🔒 **Outside Session Hours: Read-Only Mode**")
@@ -305,6 +339,10 @@ tab_recap = tabs[tab_names.index("🌙 Recap")]
 tab_league = tabs[tab_names.index("🏆 League")]
 tab_season = tabs[tab_names.index("⚙️ Season")] if "⚙️ Season" in tab_names else None
 tab_users = tabs[tab_names.index("👥 Users")] if "👥 Users" in tab_names else None
+
+def get_player_display(name):
+    emoji = st.session_state.player_emojis.get(name, "🏸")
+    return f"{emoji} {name}"
 
 def get_resting_players(courts_state):
     currently_playing = set()
@@ -349,37 +387,36 @@ def process_court_finish_callback(court_num, match, s1_key, s2_key):
         st.session_state[f"msg_{court_num}"] = ("error", f"⚠️ Court {court_num}: Match cannot end in a draw!")
         return
         
-    r = st.session_state.player_ratings
     t1_p1, t1_p2 = match['team1'][0], match['team1'][1]
     t2_p1, t2_p2 = match['team2'][0], match['team2'][1]
 
     log_match_to_database(st.session_state.current_session_num, match["team1"], match["team2"], s1, s2)
 
-    t1_avg = (r.get(t1_p1, 1200) + r.get(t1_p2, 1200)) / 2.0
-    t2_avg = (r.get(t2_p1, 1200) + r.get(t2_p2, 1200)) / 2.0
-    
-    margin = abs(s1 - s2)
-    margin_multiplier = math.log(margin + 1) if margin > 0 else 1.0
-    expected1 = 1.0 / (1.0 + 10 ** ((t2_avg - t1_avg) / 400.0))
-    expected2 = 1.0 - expected1
-    actual1 = 1.0 if s1 > s2 else (0.5 if s1 == s2 else 0.0)
-    actual2 = 1.0 - actual1
-    d1 = round(32 * margin_multiplier * (actual1 - expected1))
-    d2 = round(32 * margin_multiplier * (actual2 - expected2))
+    losing_team = match["team2"] if s1 > s2 else match["team1"]
+    win_score = max(s1, s2)
+    lose_score = min(s1, s2)
 
     for p in match["team1"]:
         if s1 > s2:
             st.session_state.session_scores[p] = st.session_state.session_scores.get(p, 0) + 2
             st.session_state.league_standings[p] = st.session_state.league_standings.get(p, 0) + 2
-        st.session_state.player_ratings[p] = max(800, st.session_state.player_ratings.get(p, 1200) + d1)
-        save_player_rating(p, st.session_state.player_ratings[p])
 
     for p in match["team2"]:
         if s2 > s1:
             st.session_state.session_scores[p] = st.session_state.session_scores.get(p, 0) + 2
             st.session_state.league_standings[p] = st.session_state.league_standings.get(p, 0) + 2
-        st.session_state.player_ratings[p] = max(800, st.session_state.player_ratings.get(p, 1200) + d2)
-        save_player_rating(p, st.session_state.player_ratings[p])
+
+    margin = abs(s1 - s2)
+    t1_names = f"{t1_p1} & {t1_p2}"
+    t2_names = f"{t2_p1} & {t2_p2}"
+    winner_str = t1_names if s1 > s2 else t2_names
+    ticker_msg = f"🔥 Court {court_num}: {winner_str} won {win_score}-{lose_score} against {' & '.join(losing_team)}!"
+    st.session_state.live_ticker.insert(0, ticker_msg)
+    if len(st.session_state.live_ticker) > 5:
+        st.session_state.live_ticker.pop()
+
+    if margin <= 2:
+        st.balloons()
 
     st.session_state.pop(s1_key, None)
     st.session_state.pop(s2_key, None)
@@ -388,8 +425,12 @@ def process_court_finish_callback(court_num, match, s1_key, s2_key):
     save_global_session_state()
     st.session_state[f"msg_{court_num}"] = ("success", f"Court {court_num} score saved successfully!")
 
+# --- COURTS ---
 if tab_courts:
     with tab_courts:
+        if st.session_state.live_ticker:
+            st.markdown(f'<div class="ticker-box">📢 <b>Courtside Broadcast:</b> {st.session_state.live_ticker[0]}</div>', unsafe_allow_html=True)
+
         if st.button("🔄 Refresh Live Courts", use_container_width=True):
             st.rerun()
             
@@ -398,35 +439,41 @@ if tab_courts:
         if not st.session_state.active_players:
             with st.container(border=True):
                 st.subheader("👥 Players for today's session")
-                st.caption("Add or remove players below, then tap 'Start session with these players' when ready.")
+                st.caption("Add players, assign personal emojis, and tap 'Start session' when ready.")
                 
-                col_add_input, col_add_btn = st.columns([3, 1])
+                col_add_input, col_add_emoji, col_add_btn = st.columns([2, 1, 1])
                 with col_add_input:
-                    new_roster_name = st.text_input("Player Name", placeholder="Type name here...", label_visibility="collapsed", key="quick_add_roster")
+                    new_roster_name = st.text_input("Player Name", placeholder="Name...", label_visibility="collapsed", key="quick_add_roster")
+                with col_add_emoji:
+                    chosen_emoji = st.text_input("Emoji", value="🏸", max_chars=2, label_visibility="collapsed", key="quick_add_emoji")
                 with col_add_btn:
                     if st.button("➕ Add", use_container_width=True):
                         if new_roster_name.strip():
                             clean_name = new_roster_name.strip()
                             if clean_name not in st.session_state.roster_builder:
                                 st.session_state.roster_builder.append(clean_name)
-                                st.rerun()
+                            st.session_state.player_emojis[clean_name] = chosen_emoji.strip() or "🏸"
+                            st.rerun()
                         else:
                             st.warning("Enter a name.")
                 
                 st.write("---")
-                st.markdown("**Current player list:**")
+                st.markdown("**Current player list & emojis:**")
                 
                 for idx, player in enumerate(list(st.session_state.roster_builder)):
-                    c_name, c_del = st.columns([4, 1])
-                    c_name.markdown(f"• {player}")
+                    c_name, c_em, c_del = st.columns([3, 1, 1])
+                    c_name.markdown(f"• **{player}**")
+                    current_emo = st.session_state.player_emojis.get(player, "🏸")
+                    new_emo = c_em.text_input("Emo", value=current_emo, max_chars=2, key=f"emo_{idx}", label_visibility="collapsed")
+                    st.session_state.player_emojis[player] = new_emo
                     if c_del.button("❌", key=f"del_roster_{idx}"):
                         st.session_state.roster_builder.remove(player)
                         st.rerun()
                 
                 st.write("---")
-                if st.button("💾 Save Player List Permanently", use_container_width=True):
+                if st.button("💾 Save Player List & Emojis", use_container_width=True):
                     if save_master_player_list(st.session_state.roster_builder):
-                        st.success("Master player list permanently saved to Supabase!")
+                        st.success("Master player list and emojis saved to Supabase!")
                 
                 st.write("---")
                 num_courts = st.number_input("Number of Courts Available", min_value=1, max_value=6, value=3, key="num_courts_setup")
@@ -441,12 +488,6 @@ if tab_courts:
                         st.session_state.play_counts = {p: 0 for p in names}
                         st.session_state.last_court_time = {p: 0 for p in names}
                         
-                        db_ratings = load_player_ratings()
-                        for p in names:
-                            if p not in st.session_state.player_ratings:
-                                st.session_state.player_ratings[p] = db_ratings.get(p, 1200)
-                            if p not in st.session_state.league_standings:
-                                st.session_state.league_standings[p] = 0
                         for c in range(1, num_courts + 1):
                             update_live_court(c, None, None)
                         temp_courts = {}
@@ -461,7 +502,7 @@ if tab_courts:
             with st.expander("👥 Manage Attendance (Add Late / Remove Early)", expanded=False):
                 col_add1, col_add2 = st.columns([3, 1])
                 with col_add1:
-                    new_player_name = st.text_input("Late Arrival Name", placeholder="Enter player name...", label_visibility="collapsed", key="midgame_add").strip()
+                    new_player_name = st.text_input("Late Arrival Name", placeholder="Enter name...", label_visibility="collapsed", key="midgame_add").strip()
                 with col_add2:
                     if st.button("➕ Add", use_container_width=True):
                         if new_player_name:
@@ -470,7 +511,7 @@ if tab_courts:
                                 st.session_state.session_scores.setdefault(new_player_name, 0)
                                 st.session_state.play_counts.setdefault(new_player_name, 0)
                                 st.session_state.last_court_time.setdefault(new_player_name, 0)
-                                st.session_state.player_ratings.setdefault(new_player_name, 1200)
+                                st.session_state.player_emojis.setdefault(new_player_name, "🏸")
                                 st.session_state.league_standings.setdefault(new_player_name, 0)
                                 save_global_session_state()
                                 st.success(f"Added {new_player_name}!")
@@ -485,7 +526,7 @@ if tab_courts:
                 
                 for p in list(st.session_state.active_players):
                     col_pname, col_pdel = st.columns([4, 1])
-                    col_pname.write(f"• **{p}** ({st.session_state.play_counts.get(p, 0)} games)")
+                    col_pname.write(f"• **{get_player_display(p)}** ({st.session_state.play_counts.get(p, 0)} games)")
                     if col_pdel.button("❌", key=f"remove_{p}"):
                         st.session_state.active_players.remove(p)
                         save_global_session_state()
@@ -493,7 +534,7 @@ if tab_courts:
                         st.rerun()
 
             resting_players = get_resting_players(live_courts_state)
-            formatted_resting = [f"{p}" for p in resting_players]
+            formatted_resting = [get_player_display(p) for p in resting_players]
             st.info(f"⏸️ **Queue ({len(resting_players)}):** {', '.join(formatted_resting) if formatted_resting else 'None'}")
             
             if st.button("💾 Save Everything to Database", type="secondary", use_container_width=True):
@@ -517,12 +558,12 @@ if tab_courts:
                         t2_p1, t2_p2 = match['team2'][0], match['team2'][1]
                         
                         st.caption("🔵 **Team A**")
-                        st.write(f"• **{t1_p1}** & **{t1_p2}**")
+                        st.write(f"• **{get_player_display(t1_p1)}** & **{get_player_display(t1_p2)}**")
                         st.pills("Team A Score", options=score_pill_options, default=0, key=f"c{court_num}_s1_pills", label_visibility="collapsed")
                         
                         st.write("---")
                         st.caption("🔴 **Team B**")
-                        st.write(f"• **{t2_p1}** & **{t2_p2}**")
+                        st.write(f"• **{get_player_display(t2_p1)}** & **{get_player_display(t2_p2)}**")
                         st.pills("Team B Score", options=score_pill_options, default=0, key=f"c{court_num}_s2_pills", label_visibility="collapsed")
                         
                         st.write("")
@@ -539,10 +580,24 @@ if tab_courts:
 with tab_standings:
     st.subheader(f"Today's Standings (Session {st.session_state.current_session_num}/12)")
     if st.session_state.session_scores:
-        df_today = pd.DataFrame([
-            {"Player": k, "Session Points": v, "Games Played": st.session_state.play_counts.get(k, 0)}
-            for k, v in st.session_state.session_scores.items()
-        ]).sort_values(by="Session Points", ascending=False).reset_index(drop=True)
+        max_games = max(st.session_state.play_counts.values()) if st.session_state.play_counts else 0
+        max_points = max(st.session_state.session_scores.values()) if st.session_state.session_scores else 0
+        
+        standings_data = []
+        for k, v in st.session_state.session_scores.items():
+            games = st.session_state.play_counts.get(k, 0)
+            badges = []
+            if games == max_games and games > 0: badges.append("🏃‍♂️ Marathon Runner")
+            if v == max_points and v > 0: badges.append("⚡ Smashing Machine")
+            
+            standings_data.append({
+                "Player": get_player_display(k),
+                "Session Points": v,
+                "Games Played": games,
+                "Fun Badge": " · ".join(badges) if badges else "🔥 Contender"
+            })
+            
+        df_today = pd.DataFrame(standings_data).sort_values(by="Session Points", ascending=False).reset_index(drop=True)
         df_today.index += 1
         st.dataframe(df_today, use_container_width=True)
     else:
@@ -595,9 +650,9 @@ with tab_hub:
                     elif p2_in_t2 and s2 > s1: p1_wins += 1
                     
             c1, c2, c3 = st.columns(3)
-            c1.metric(f"{p1} Wins", p1_wins)
+            c1.metric(f"{get_player_display(p1)} Wins", p1_wins)
             c2.metric("Battles", meetings)
-            c3.metric(f"{p2} Wins", p2_wins)
+            c3.metric(f"{get_player_display(p2)} Wins", p2_wins)
             
             if meetings == 0:
                 st.info("No recorded direct matches yet.")
@@ -617,17 +672,9 @@ with tab_hub:
                 
         if player_matches:
             recent_form = "  ".join(player_matches[-5:])
-            st.write(f"**Last {min(5, len(player_matches))} matches for {selected_player}:** {recent_form}")
+            st.write(f"**Last {min(5, len(player_matches))} matches for {get_player_display(selected_player)}:** {recent_form}")
         else:
             st.info("No match history recorded yet.")
-
-        st.write("---")
-        st.subheader("📊 Club Power Rankings (ELO)")
-        if st.session_state.player_ratings:
-            rating_df = pd.DataFrame([{"Player": k, "Rating": v} for k, v in st.session_state.player_ratings.items()])
-            rating_df = rating_df.sort_values("Rating", ascending=False).head(10).set_index("Player")
-            st.bar_chart(rating_df)
-
     else:
         st.info("No players available for the Hub yet.")
 
@@ -665,28 +712,30 @@ with tab_recap:
             champ = max(player_wins, key=player_wins.get)
             with st.container(border=True):
                 st.caption("CHAMPION OF THE NIGHT")
-                st.markdown(f"**{champ}**")
+                st.markdown(f"**{get_player_display(champ)}**")
                 st.write(f"{player_wins[champ]} wins")
                 
         if longest_match.get("s1"):
             with st.container(border=True):
                 st.caption("LONGEST GAME PLAYED")
                 st.markdown(f"**{longest_match['s1']}–{longest_match['s2']}**")
-                st.write(f"{' & '.join(longest_match.get('t1', []))} vs {' & '.join(longest_match.get('t2', []))}")
+                t1_str = ' & '.join([get_player_display(x) for x in longest_match.get('t1', [])])
+                t2_str = ' & '.join([get_player_display(x) for x in longest_match.get('t2', [])])
+                st.write(f"{t1_str} vs {t2_str}")
                 
         if close_matches:
             max_close = max(close_matches.values())
-            heroes = [k for k, v in close_matches.items() if v == max_close]
+            heroes = [get_player_display(k) for k, v in close_matches.items() if v == max_close]
             with st.container(border=True):
-                st.caption("HEARTBREAK HEROES")
+                st.caption("CARDIAC KIDS (CLOSE MATCH HEROES)")
                 st.markdown(f"**{' · '.join(heroes)}**")
-                st.write(f"{max_close} close matches (2 pts or fewer)")
+                st.write(f"{max_close} nail-biting matches (2 pts or fewer)")
                 
         if total_points:
             wh = max(total_points, key=total_points.get)
             with st.container(border=True):
                 st.caption("THE WORKHORSE")
-                st.markdown(f"**{wh}**")
+                st.markdown(f"**{get_player_display(wh)}**")
                 st.write(f"{total_points[wh]} total points played")
     else:
         st.info("No games finished or recorded in history yet.")
@@ -694,11 +743,16 @@ with tab_recap:
 with tab_league:
     st.subheader(f"🏆 12-Session Overall League ({st.session_state.current_session_num}/12)")
     if st.session_state.league_standings:
-        df_league = pd.DataFrame([
-            {"Player": k, "Total Points": v}
-            for k, v in st.session_state.league_standings.items()
-        ]).sort_values(by="Total Points", ascending=False).reset_index(drop=True)
+        league_data = []
+        for k, v in st.session_state.league_standings.items():
+            league_data.append({
+                "Player": get_player_display(k),
+                "RawName": k,
+                "Total Points": v
+            })
+        df_league = pd.DataFrame(league_data).sort_values(by="Total Points", ascending=False).reset_index(drop=True)
         df_league.index += 1
+        
         st.markdown("### 🥇 Top 3 Leaderboard")
         cols = st.columns(3)
         if len(df_league) >= 1: cols[0].metric("🥇 1st", f"{df_league.iloc[0]['Player']}", f"{df_league.iloc[0]['Total Points']} pts")
@@ -711,7 +765,8 @@ with tab_league:
         st.bar_chart(chart_data)
         
         st.write("---")
-        st.dataframe(df_league, use_container_width=True)
+        display_df = df_league.drop(columns=["RawName"])
+        st.dataframe(display_df, use_container_width=True)
     else:
         st.info("No overall standings recorded yet.")
 
@@ -752,8 +807,8 @@ if tab_season:
             for m in reversed(recent_matches):
                 m_id = m['id']
                 sess = m['session_num']
-                t1 = " & ".join(m.get('team_a', []))
-                t2 = " & ".join(m.get('team_b', []))
+                t1 = " & ".join([get_player_display(x) for x in m.get('team_a', [])])
+                t2 = " & ".join([get_player_display(x) for x in m.get('team_b', [])])
                 s1, s2 = m.get('score_a', 0), m.get('score_b', 0)
                 
                 c1, c2 = st.columns([4, 1])
@@ -809,7 +864,7 @@ if tab_season:
 
 if tab_users:
     with tab_users:
-        st.subheader("👥 User Logs")
+        st.subheader("👥 User Logs & Active Presence")
         try:
             users_resp = supabase.table("users").select("*").execute()
             logs_resp = supabase.table("login_logs").select("username, login_time").order("id", desc=True).limit(50).execute()
@@ -821,14 +876,23 @@ if tab_users:
                 
             df_logs = pd.DataFrame(logs_resp.data) if logs_resp.data else pd.DataFrame(columns=["username", "login_time"])
             
-            c1, c2 = st.columns(2)
+            c1, c2, c3 = st.columns(3)
             c1.metric("Players", len(df_users))
-            c2.metric("Logins", len(df_logs))
+            c2.metric("Total Logins", len(df_logs))
+            c3.metric("Online Now", len(active_viewers))
+            
+            st.write("---")
+            st.markdown("### 🟢 Currently Viewing App")
+            if active_viewers:
+                st.write(", ".join([f"**{u}**" for u in active_viewers]))
+            else:
+                st.info("No active users browsing right now.")
+
             st.write("---")
             st.markdown("### 📋 Accounts")
             st.dataframe(df_users, use_container_width=True)
             st.write("---")
-            st.markdown("### 🕒 Logins")
+            st.markdown("### 🕒 Login Audit Trail")
             st.dataframe(df_logs, use_container_width=True)
         except Exception as ex:
             st.warning(f"Error: {ex}")
