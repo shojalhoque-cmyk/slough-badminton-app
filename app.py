@@ -218,7 +218,7 @@ if not st.session_state.logged_in:
 open_access = is_open_access_window()
 can_edit = open_access or (st.session_state.role == "admin")
 is_master_admin = (st.session_state.username == "admin")
-can_manage_season = open_access or (st.session_state.username in ["admin", "Musa", "Aaron"])
+can_manage_season = (st.session_state.role == "admin") # Locked to admins only
 
 st.sidebar.write(f"Logged in as: **{st.session_state.username}** ({st.session_state.role.capitalize()})")
 st.sidebar.divider()
