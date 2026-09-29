@@ -155,9 +155,10 @@ def log_login_event(username):
     except Exception:
         pass
 
-def is_session_active():
+def is_open_access_window():
     now_uk = datetime.now(ZoneInfo("Europe/London"))
-    return now_uk.weekday() == 0 and (20 <= now_uk.hour < 22)
+    # 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday
+    return now_uk.weekday() < 5 and (15 <= now_uk.hour < 22)
 
 # --- SESSION INITIALIZATION ---
 query_params = st.query_params
@@ -214,10 +215,10 @@ if not st.session_state.logged_in:
     st.stop()
 
 # --- MAIN APP LOGIC ---
-session_live = is_session_active()
-can_edit = session_live or (st.session_state.role == "admin")
+open_access = is_open_access_window()
+can_edit = open_access or (st.session_state.role == "admin")
 is_master_admin = (st.session_state.username == "admin")
-can_manage_season = (st.session_state.username in ["admin", "Musa", "Aaron"])
+can_manage_season = open_access or (st.session_state.username in ["admin", "Musa", "Aaron"])
 
 st.sidebar.write(f"Logged in as: **{st.session_state.username}** ({st.session_state.role.capitalize()})")
 st.sidebar.divider()
@@ -228,9 +229,12 @@ if is_master_admin:
     st.sidebar.caption(", ".join([f"**{u}**" for u in active_viewers]) if active_viewers else "No other active users.")
     st.sidebar.divider()
 
-if st.session_state.role == "admin": st.sidebar.success("👑 **Admin User: Full Access Active**")
-elif session_live: st.sidebar.success("🟢 **Session Active: Edit Mode Unlocked**")
-else: st.sidebar.info("🔒 **Outside Hours: Read-Only**")
+if st.session_state.role == "admin": 
+    st.sidebar.success("👑 **Admin User: Full Access Active**")
+elif open_access: 
+    st.sidebar.success("🟢 **Admin Window Active (M-F 3PM-10PM)**")
+else: 
+    st.sidebar.info("🔒 **Outside Hours: Read-Only**")
 
 if st.sidebar.button("Log Out", use_container_width=True):
     st.query_params.clear()
