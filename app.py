@@ -20,7 +20,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- SUPABASE INIT ---
+# --- SUPABASE & SECRETS INIT ---
 @st.cache_resource
 def init_supabase():
     return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
@@ -30,7 +30,11 @@ try:
 except Exception:
     st.error("Database connection failed. Verify Streamlit secrets.")
 
-ADMIN_ACCOUNTS = {"admin": "4dm1n776&", "Musa": "4dmiN786&", "Simon": "4dm1nh3ll0", "Aaron": "A4dm1n1"}
+try:
+    ADMIN_ACCOUNTS = dict(st.secrets["admins"])
+except Exception:
+    ADMIN_ACCOUNTS = {}
+
 DEFAULT_MASTER_ROSTER = ["Shoj", "Abdul Waheed", "Aaron", "Faisal", "Naveed", "AbdulKhader", "Ryan", "Abdullah sr", "Yousuf", "Aamer", "Mohsin", "Simon", "Joe S", "Hassan", "Habeeb"]
 
 # --- DATABASE HELPERS ---
