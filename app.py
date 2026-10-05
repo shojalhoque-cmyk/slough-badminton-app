@@ -51,13 +51,11 @@ def load_master_player_list():
 
 def save_master_player_list(players_list):
     if not supabase:
-        st.error("Database unavailable.")
         return False
     try:
         supabase.table("master_player_list").upsert({"id": 1, "players": players_list}).execute()
         return True
-    except Exception as e:
-        st.error(f"Error saving players: {e}")
+    except Exception:
         return False
 
 def load_global_session_state():
@@ -108,22 +106,25 @@ def log_match_to_database(session_num, team1, team2, s1, s2):
         return
     try:
         supabase.table("match_history_log").insert({"session_num": session_num, "team_a": team1, "team_b": team2, "score_a": s1, "score_b": s2}).execute()
-    except Exception as e:
-        st.error(f"Error logging match: {e}")
+    except Exception:
+        pass
 
 def fetch_live_courts():
+    courts = {}
+    for i in range(1, 7):
+        courts[i] = None
     if not supabase:
-        return {}
+        return courts
     try:
         resp = supabase.table("live_courts").select("*").execute()
-        courts = {}
         if resp.data:
             for row in resp.data:
                 c_id = row["court_id"]
-                courts[c_id] = {"team1": row["team_a"], "team2": row["team_b"]} if row.get("team_a") and row.get("team_b") else None
+                if row.get("team_a") and row.get("team_b"):
+                    courts[c_id] = {"team1": row["team_a"], "team2": row["team_b"]}
         return courts
     except Exception:
-        return {}
+        return courts
 
 def update_live_court(court_num, team1=None, team2=None):
     if not supabase:
@@ -433,7 +434,7 @@ if tab_courts:
 
             st.subheader("Live Courts")
             opts = list(range(31))
-            for c_num in range(1, 4):
+            for c_num in range(1, st.session_state.default_courts + 1):
                 match = live_courts.get(c_num)
                 msg = st.session_state.pop(f"msg_{c_num}", None)
                 if msg: st.error(msg[1]) if msg[0] == "error" else st.success(msg[1])
@@ -569,14 +570,15 @@ if tab_season:
                     else: st.error("Fill names.")
 
         st.divider()
-        st.markdown("### 🗑️️ Undo Matches")
+        st.markdown("### 🗑️ Undo Matches")
         for m in reversed(fetch_permanent_match_history()[-10:]):
             mid, s_n = m['id'], m['session_num']
             t1, t2, s1, s2 = m.get('team_a',[]), m.get('team_b',[]), m.get('score_a',0), m.get('score_b',0)
             c_i, c_b = st.columns([4, 1])
             c_i.write(f"S{s_n} | {'&'.join(t1)} ({s1}) vs {'&'.join(t2)} ({s2})")
             if c_b.button("❌", key=f"del_{mid}"):
-                supabase.table("match_history_log").delete().eq("id", mid).execute()
+                if supabase:
+                    supabase.table("match_history_log").delete().eq("id", mid).execute()
                 if s_n == st.session_state.current_session_num:
                     for p in t1:
                         if s1 > s2:
