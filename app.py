@@ -23,12 +23,14 @@ st.markdown("""
 # --- SUPABASE & SECRETS INIT ---
 @st.cache_resource
 def init_supabase():
-    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    try:
+        url = st.secrets["SUPABASE_URL"]
+        key = st.secrets["SUPABASE_KEY"]
+        return create_client(url, key)
+    except Exception:
+        return None
 
-try:
-    supabase: Client = init_supabase()
-except Exception:
-    st.error("Database connection failed. Verify Streamlit secrets.")
+supabase: Client = init_supabase()
 
 try:
     ADMIN_ACCOUNTS = dict(st.secrets["admins"])
@@ -39,6 +41,8 @@ DEFAULT_MASTER_ROSTER = ["Shoj", "Abdul Waheed", "Aaron", "Faisal", "Naveed", "A
 
 # --- DATABASE HELPERS ---
 def load_master_player_list():
+    if not supabase:
+        return DEFAULT_MASTER_ROSTER
     try:
         resp = supabase.table("master_player_list").select("players").eq("id", 1).execute()
         return resp.data[0]["players"] if resp.data else DEFAULT_MASTER_ROSTER
@@ -46,6 +50,9 @@ def load_master_player_list():
         return DEFAULT_MASTER_ROSTER
 
 def save_master_player_list(players_list):
+    if not supabase:
+        st.error("Database unavailable.")
+        return False
     try:
         supabase.table("master_player_list").upsert({"id": 1, "players": players_list}).execute()
         return True
@@ -54,6 +61,8 @@ def save_master_player_list(players_list):
         return False
 
 def load_global_session_state():
+    if not supabase:
+        return
     try:
         resp = supabase.table("session_state").select("*").eq("id", 1).execute()
         if resp.data:
@@ -64,10 +73,13 @@ def load_global_session_state():
             st.session_state.league_standings = row.get("league_standings", {})
             st.session_state.play_counts = row.get("play_counts", {})
             st.session_state.live_ticker = row.get("live_ticker", [])
+            st.session_state.default_courts = row.get("default_courts", 3)
     except Exception:
         pass
 
 def save_global_session_state():
+    if not supabase:
+        return
     try:
         supabase.table("session_state").upsert({
             "id": 1,
@@ -76,12 +88,15 @@ def save_global_session_state():
             "session_scores": st.session_state.get("session_scores", {}),
             "league_standings": st.session_state.get("league_standings", {}),
             "play_counts": st.session_state.get("play_counts", {}),
-            "live_ticker": st.session_state.get("live_ticker", [])
+            "live_ticker": st.session_state.get("live_ticker", []),
+            "default_courts": st.session_state.get("default_courts", 3)
         }).execute()
     except Exception:
         pass
 
 def fetch_permanent_match_history():
+    if not supabase:
+        return []
     try:
         resp = supabase.table("match_history_log").select("*").order("id", desc=False).execute()
         return resp.data if resp.data else []
@@ -89,12 +104,16 @@ def fetch_permanent_match_history():
         return []
 
 def log_match_to_database(session_num, team1, team2, s1, s2):
+    if not supabase:
+        return
     try:
         supabase.table("match_history_log").insert({"session_num": session_num, "team_a": team1, "team_b": team2, "score_a": s1, "score_b": s2}).execute()
     except Exception as e:
         st.error(f"Error logging match: {e}")
 
 def fetch_live_courts():
+    if not supabase:
+        return {}
     try:
         resp = supabase.table("live_courts").select("*").execute()
         courts = {}
@@ -107,12 +126,16 @@ def fetch_live_courts():
         return {}
 
 def update_live_court(court_num, team1=None, team2=None):
+    if not supabase:
+        return
     try:
         supabase.table("live_courts").upsert({"court_id": court_num, "team_a": team1, "team_b": team2}).execute()
     except Exception:
         pass
 
 def update_user_presence(username):
+    if not supabase:
+        return
     try:
         now_uk = datetime.now(ZoneInfo("Europe/London")).isoformat()
         supabase.table("active_presence").upsert({"username": username, "last_seen": now_uk}).execute()
@@ -120,6 +143,8 @@ def update_user_presence(username):
         pass
 
 def get_active_viewers():
+    if not supabase:
+        return []
     try:
         now_utc = datetime.now(ZoneInfo("Europe/London"))
         resp = supabase.table("active_presence").select("username, last_seen").execute()
@@ -135,6 +160,8 @@ def get_active_viewers():
 
 def get_user_role(username, password):
     if username in ADMIN_ACCOUNTS and ADMIN_ACCOUNTS[username] == password: return "admin"
+    if not supabase:
+        return None
     try:
         resp = supabase.table("users").select("role").eq("username", username).eq("password", password).execute()
         if resp.data: return resp.data[0]["role"]
@@ -144,6 +171,8 @@ def get_user_role(username, password):
 
 def register_user(username, password):
     if username in ADMIN_ACCOUNTS: return False, "Username reserved."
+    if not supabase:
+        return False, "Database unavailable."
     try:
         if supabase.table("users").select("username").eq("username", username).execute().data:
             return False, "Username already exists."
@@ -153,6 +182,8 @@ def register_user(username, password):
         return False, f"Error: {e}"
 
 def log_login_event(username):
+    if not supabase:
+        return
     try:
         now_uk = datetime.now(ZoneInfo("Europe/London")).strftime("%Y-%m-%d %H:%M:%S")
         supabase.table("login_logs").insert({"username": username, "login_time": now_uk}).execute()
@@ -170,6 +201,7 @@ if "logged_in" not in st.session_state:
 if "last_court_time" not in st.session_state: st.session_state.last_court_time = {}
 if "roster_builder" not in st.session_state: st.session_state.roster_builder = load_master_player_list()
 if "live_ticker" not in st.session_state: st.session_state.live_ticker = ["👋 Welcome to Slough Badminton Club Mondays!"]
+if "default_courts" not in st.session_state: st.session_state.default_courts = 3
 
 load_global_session_state()
 
@@ -255,7 +287,7 @@ tab_standings = tabs[tab_names.index("📊 Standings")]
 tab_hub = tabs[tab_names.index("🔥 Hub")]
 tab_recap = tabs[tab_names.index("🌙 Recap")]
 tab_league = tabs[tab_names.index("🏆 League")]
-tab_season = tabs[tab_names.index("⚙️ Season")] if "⚙️ Season" in tab_names else None
+tab_season = tabs[tab_names.index("⚙️️ Season")] if "⚙️ Season" in tab_names else None
 tab_users = tabs[tab_names.index("👥 Users")] if "👥 Users" in tab_names else None
 
 def get_resting_players(courts_state):
@@ -338,7 +370,17 @@ if tab_courts:
                 if st.button("💾 Save Players", use_container_width=True):
                     if save_master_player_list(st.session_state.roster_builder): st.success("Saved!")
                 
-                num_courts = st.number_input("Courts", 1, 6, 3)
+                st.divider()
+                col_c1, col_c2 = st.columns([3, 1])
+                with col_c1:
+                    num_courts = st.number_input("Courts", 1, 6, st.session_state.default_courts, key="court_input_val")
+                with col_c2:
+                    st.write("")
+                    if st.button("💾 Save Courts", use_container_width=True):
+                        st.session_state.default_courts = st.session_state.court_input_val
+                        save_global_session_state()
+                        st.success("Courts saved!")
+                
                 if st.button("🚀 Start Session", type="primary", use_container_width=True):
                     if len(st.session_state.roster_builder) < 4:
                         st.error("Need 4+ players.")
