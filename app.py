@@ -198,6 +198,7 @@ def is_open_access_window():
 if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "username": None, "role": None})
 
+if "current_session_num" not in st.session_state: st.session_state.current_session_num = 1
 if "last_court_time" not in st.session_state: st.session_state.last_court_time = {}
 if "roster_builder" not in st.session_state: st.session_state.roster_builder = load_master_player_list()
 if "live_ticker" not in st.session_state: st.session_state.live_ticker = ["👋 Welcome to Slough Badminton Club Mondays!"]
@@ -287,7 +288,7 @@ tab_standings = tabs[tab_names.index("📊 Standings")]
 tab_hub = tabs[tab_names.index("🔥 Hub")]
 tab_recap = tabs[tab_names.index("🌙 Recap")]
 tab_league = tabs[tab_names.index("🏆 League")]
-tab_season = tabs[tab_names.index("⚙️️ Season")] if "⚙️ Season" in tab_names else None
+tab_season = tabs[tab_names.index("⚙️ Season")] if "⚙️ Season" in tab_names else None
 tab_users = tabs[tab_names.index("👥 Users")] if "👥 Users" in tab_names else None
 
 def get_resting_players(courts_state):
