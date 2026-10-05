@@ -199,6 +199,10 @@ if "logged_in" not in st.session_state:
     st.session_state.update({"logged_in": False, "username": None, "role": None})
 
 if "current_session_num" not in st.session_state: st.session_state.current_session_num = 1
+if "active_players" not in st.session_state: st.session_state.active_players = []
+if "session_scores" not in st.session_state: st.session_state.session_scores = {}
+if "league_standings" not in st.session_state: st.session_state.league_standings = {}
+if "play_counts" not in st.session_state: st.session_state.play_counts = {}
 if "last_court_time" not in st.session_state: st.session_state.last_court_time = {}
 if "roster_builder" not in st.session_state: st.session_state.roster_builder = load_master_player_list()
 if "live_ticker" not in st.session_state: st.session_state.live_ticker = ["👋 Welcome to Slough Badminton Club Mondays!"]
@@ -565,7 +569,7 @@ if tab_season:
                     else: st.error("Fill names.")
 
         st.divider()
-        st.markdown("### 🗑️ Undo Matches")
+        st.markdown("### 🗑️️ Undo Matches")
         for m in reversed(fetch_permanent_match_history()[-10:]):
             mid, s_n = m['id'], m['session_num']
             t1, t2, s1, s2 = m.get('team_a',[]), m.get('team_b',[]), m.get('score_a',0), m.get('score_b',0)
